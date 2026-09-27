@@ -125,6 +125,89 @@ pwsh -File .\tools\check-preset.ps1
 
 js-yaml 会从 DSH 的 npx 缓存里自动找；找不到就跳过 YAML 解析，其余 8 项照样跑。
 
+## 接到微信
+
+**本仓库不含微信桥接**——桥接是另一个第三方插件，要单独装。
+
+### 前置条件
+
+| 要求 | 说明 |
+|---|---|
+| Node.js **≥ 22** | 桥接是 ESM，硬要求 |
+| pnpm | `npm install -g pnpm` |
+| DSH 本体 | 装好并能跑 `dsh web` |
+| `DEEPSEEK_API_KEY` | 在 DSH 里配好，否则模型调不动 |
+| **一台常开的电脑** | ⚠️ 桥接靠本机 `dsh web` 驱动会话，**关机即下线**，不是云服务 |
+
+### 第 1 步：装桥接
+
+```powershell
+dsh plugin --profile web add github:CMD128/dsh-wx-bridge
+```
+
+纯 JS、零第三方运行时依赖、**仅主动出站长轮询**——不需要公网 IP，也不需要端口转发。
+
+### 第 2 步：装人格
+
+```powershell
+git clone https://github.com/c74742870-crypto/chuchuno_1
+cd chuchuno_1
+pwsh -File .\tools\deploy.ps1
+```
+
+`deploy.ps1` 会：校验源文件 → 备份现有部署 → 复制到 `$env:USERPROFILE\.dsh\.agent-presets\whale-girl\` → 提示重启。
+想先看它要做什么：`pwsh -File .\tools\deploy.ps1 -WhatIf`。
+DSH 装在别处就加 `-DshHome "D:\你的\dsh-home"`。
+
+> **目录名必须是 `whale-girl`** —— DSH 用目录名当 preset id。`deploy.ps1` 已默认如此。
+
+### 第 3 步：打桥接补丁（**别跳过，否则用不了**）
+
+原版桥接有 3 个问题，其中一个是致命的：
+
+```powershell
+pwsh -File .\dsh-wx-bridge-patch\apply-bridge-patch.ps1 -DryRun   # 先看
+pwsh -File .\dsh-wx-bridge-patch\apply-bridge-patch.ps1           # 应用
+```
+
+它会自动打**补丁 2、3**（备份 + 语法检查 + 失败自动还原）。
+**补丁 1（模型注入器）需要手工应用**——脚本会把确切代码片段打印出来，照 README 插入即可。
+
+不打的后果：微信里会间歇性报
+`agent "session-xxx" has no provider/model`，而且 **GUI 里有回复、微信里没有**。
+
+详见 [`dsh-wx-bridge-patch/README.md`](dsh-wx-bridge-patch/README.md)。
+
+### 第 4 步：重启 + 扫码
+
+```powershell
+dsh web
+```
+
+然后 **设置 → 微信通道 → 扫码**。扫完 ClawBot 会出现在你的微信联系人里。
+
+### 第 5 步：用起来
+
+```
+新建会话时就要在 preset 选择器里选「鲸鱼娘」
+    ↓
+微信里： /sessions  →  /use <编号>  →  /bind 确认
+    ↓
+再发第一句话
+```
+
+⚠️ **顺序不能错**。preset 是「一会话一锁」：会话一旦跑过一个回合，
+内核就抛 `agent-preset/locked: session has already started` 且**不可逆**。
+先说话再想切人格，只能换新会话。
+
+## 工具
+
+| 脚本 | 用途 |
+|---|---|
+| `tools/check-preset.ps1` | 校验 persona 文件（9 项，能抓出会炸的 `{{ }}` 和缩进问题） |
+| `tools/deploy.ps1` | 校验 + 备份 + 部署到 `.agent-presets/whale-girl/` |
+| `dsh-wx-bridge-patch/apply-bridge-patch.ps1` | 给微信桥接打补丁 2、3 |
+
 ## 目录结构
 
 ```
@@ -133,7 +216,11 @@ whale-girl-persona/
 │   ├── agent.cordis.yml   # persona 本体（部署到 .agent-presets/whale-girl/）
 │   └── preset.yml         # 显示名 / 描述 / 排序
 ├── tools/
-│   └── check-preset.ps1   # 部署前校验
+│   ├── check-preset.ps1   # 部署前校验
+│   └── deploy.ps1         # 备份 + 部署
+├── dsh-wx-bridge-patch/
+│   ├── README.md              # 3 个补丁的完整说明与 diff
+│   └── apply-bridge-patch.ps1 # 半自动重放（补丁 2、3）
 ├── LICENSE
 └── README.md
 ```
