@@ -1,0 +1,18 @@
+# 忽略临时产物与本地环境
+*.log
+*.tmp
+node_modules/
+.npm-cache/
+.pnpm-store/
+.pnpm-state/
+
+# 本地敏感内容：绝不入库
+*credentials*
+*secret*
+*token*
+.env
+*.env
+
+# 二维码 / 截图等临时文件
+*qr*.png
+*dsh*.png
