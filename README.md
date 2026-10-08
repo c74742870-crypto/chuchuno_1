@@ -129,6 +129,26 @@ js-yaml 会从 DSH 的 npx 缓存里自动找；找不到就跳过 YAML 解析�
 
 **本仓库不含微信桥接**——桥接是另一个第三方插件，要单独装。
 
+### ⚠️ 先看这条：DSH 版本要求
+
+`dsh-wx-bridge@0.1.0` 的 `peerDependencies` 只声明支持 **DSH 0.1.x**。
+在 **DSH 0.2.x** 上它会被启动时**直接跳过**，表现为「微信突然连不上」：
+
+```
+dsh: skipping profile bundle "dsh-wx-bridge":
+Plugin dsh-wx-bridge@0.1.0 is incompatible with dsh 0.2.0-rc.2
+```
+
+**如果你在 0.2.x 上**，先跑移植脚本再往下：
+
+```powershell
+pwsh -File .\tools\port-to-dsh02.ps1 -DryRun   # 先看
+pwsh -File .\tools\port-to-dsh02.ps1           # 执行
+```
+
+原理、风险、回滚见 [`dsh-wx-bridge-patch/porting-to-dsh-0.2.md`](dsh-wx-bridge-patch/porting-to-dsh-0.2.md)。
+**这是带风险豁免**（DSH 原文警告 "may cause crashes or data loss"），不是官方支持路径。
+
 ### 前置条件
 
 | 要求 | 说明 |
@@ -146,6 +166,15 @@ dsh plugin --profile web add github:CMD128/dsh-wx-bridge
 ```
 
 纯 JS、零第三方运行时依赖、**仅主动出站长轮询**——不需要公网 IP，也不需要端口转发。
+
+装完先确认它真的被加载了（**关键判据**）：
+
+```powershell
+curl.exe -s -o NUL -w "%{http_code}`n" http://127.0.0.1:3080/chatops/api/status
+```
+
+- **200 + JSON** → 已加载，继续
+- **404** → 被跳过了（多半是版本门禁），回到上面「DSH 版本要求」
 
 ### 第 2 步：装人格
 
@@ -206,7 +235,19 @@ dsh web
 |---|---|
 | `tools/check-preset.ps1` | 校验 persona 文件（9 项，能抓出会炸的 `{{ }}` 和缩进问题） |
 | `tools/deploy.ps1` | 校验 + 备份 + 部署到 `.agent-presets/whale-girl/` |
+| `tools/port-to-dsh02.ps1` | **DSH 0.2.x 兼容化**：版本豁免 + 模块重定向 |
 | `dsh-wx-bridge-patch/apply-bridge-patch.ps1` | 给微信桥接打补丁 2、3 |
+
+## 踩过的坑速查
+
+| 症状 | 原因 | 去哪看 |
+|---|---|---|
+| 微信突然连不上，`/chatops` 返回 404 | DSH 升到 0.2.x，插件被版本门禁跳过 | [porting-to-dsh-0.2.md](dsh-wx-bridge-patch/porting-to-dsh-0.2.md) |
+| 微信间歇性「本轮运行失败 / has no provider/model」 | 桥接唤醒冷会话绕过了模型注入器 | [补丁 1](dsh-wx-bridge-patch/README.md) |
+| 微信收不到任何回复（GUI 正常） | 误关了 `push.onSessionComplete`——那是唯一投递通道 | [补丁 2](dsh-wx-bridge-patch/README.md) |
+| 每轮回复重复、带「✅ 任务完成」外壳 | 原版行为，需打补丁 2 | [补丁 2](dsh-wx-bridge-patch/README.md) |
+| 整轮失败：`{{model}} has no value` | persona 里写了模板变量 | 本文「踩坑」第 1 条 |
+| 人格切不动：`agent-preset/locked` | preset 一会话一锁，只能在空白会话切 | 本文「使用」 |
 
 ## 目录结构
 
@@ -216,11 +257,13 @@ whale-girl-persona/
 │   ├── agent.cordis.yml   # persona 本体（部署到 .agent-presets/whale-girl/）
 │   └── preset.yml         # 显示名 / 描述 / 排序
 ├── tools/
-│   ├── check-preset.ps1   # 部署前校验
-│   └── deploy.ps1         # 备份 + 部署
+│   ├── check-preset.ps1     # 部署前校验
+│   ├── deploy.ps1           # 备份 + 部署
+│   └── port-to-dsh02.ps1    # DSH 0.2.x 兼容化（版本豁免 + 模块重定向）
 ├── dsh-wx-bridge-patch/
-│   ├── README.md              # 3 个补丁的完整说明与 diff
-│   └── apply-bridge-patch.ps1 # 半自动重放（补丁 2、3）
+│   ├── README.md                # 3 个补丁的完整说明与 diff
+│   ├── apply-bridge-patch.ps1   # 半自动重放（补丁 2、3）
+│   └── porting-to-dsh-0.2.md    # 0.2.x 移植的原理、风险、回滚
 ├── LICENSE
 └── README.md
 ```
