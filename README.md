@@ -129,25 +129,43 @@ js-yaml 会从 DSH 的 npx 缓存里自动找；找不到就跳过 YAML 解析�
 
 **本仓库不含微信桥接**——桥接是另一个第三方插件，要单独装。
 
-### ⚠️ 先看这条：DSH 版本要求
+### ⚠️ DSH 有两个大版本，本仓库两套都给
 
-`dsh-wx-bridge@0.1.0` 的 `peerDependencies` 只声明支持 **DSH 0.1.x**。
-在 **DSH 0.2.x** 上它会被启动时**直接跳过**，表现为「微信突然连不上」：
+| DSH 版本 | preset 格式 | 用哪个文件 | 装法 |
+|---|---|---|---|
+| **0.1.x** | 目录式（`.agent-presets/`） | `preset/agent.cordis.yml` + `preset/preset.yml` | `tools/deploy.ps1` |
+| **0.2.x** | 声明式（composition 里一行） | `preset/whale-girl.patch.yml` | `tools/install-preset-02.ps1` |
 
-```
-dsh: skipping profile bundle "dsh-wx-bridge":
-Plugin dsh-wx-bridge@0.1.0 is incompatible with dsh 0.2.0-rc.2
-```
+**怎么判断自己在哪个版本**：`dsh --version`。
 
-**如果你在 0.2.x 上**，先跑移植脚本再往下：
+**0.2.x 的 preset 机制被整个重写了**，0.1.x 的目录式 preset **在 0.2.x 下不会被发现**——
+不再扫描 `<DSH_HOME>/.agent-presets/`，改为在 composition 里声明
+`@deepseek-ai/dsh-agent-preset` 行。所以两套格式不能混用。
+
+#### 如果你在 DSH 0.2.x
+
+必须做三件事，缺一不可：
 
 ```powershell
-pwsh -File .\tools\port-to-dsh02.ps1 -DryRun   # 先看
-pwsh -File .\tools\port-to-dsh02.ps1           # 执行
+# 1) 解决插件版本门禁 + 模块解析（否则桥接根本不加载）
+pwsh -File .\tools\port-to-dsh02.ps1 -DryRun
+pwsh -File .\tools\port-to-dsh02.ps1
+
+# 2) 装 preset
+pwsh -File .\tools\install-preset-02.ps1 -DryRun
+pwsh -File .\tools\install-preset-02.ps1
+
+# 3) 打桥接补丁（含 format v4 修复，0.2.x 必打）
+pwsh -File .\dsh-wx-bridge-patch\apply-bridge-patch.ps1
 ```
 
-原理、风险、回滚见 [`dsh-wx-bridge-patch/porting-to-dsh-0.2.md`](dsh-wx-bridge-patch/porting-to-dsh-0.2.md)。
-**这是带风险豁免**（DSH 原文警告 "may cause crashes or data loss"），不是官方支持路径。
+两处移植的原理、风险、回滚见：
+
+- [`dsh-wx-bridge-patch/porting-to-dsh-0.2.md`](dsh-wx-bridge-patch/porting-to-dsh-0.2.md)
+- [`dsh-wx-bridge-patch/README.md`](dsh-wx-bridge-patch/README.md) 的「补丁 4」
+
+⚠️ 版本豁免是**带风险的**（DSH 原文警告 `may cause crashes or data loss`），
+不是官方支持路径。上游适配 0.2.x 后请改用上游版本并撤销本方案。
 
 ### 前置条件
 
@@ -231,21 +249,24 @@ dsh web
 
 ## 工具
 
-| 脚本 | 用途 |
-|---|---|
-| `tools/check-preset.ps1` | 校验 persona 文件（9 项，能抓出会炸的 `{{ }}` 和缩进问题） |
-| `tools/deploy.ps1` | 校验 + 备份 + 部署到 `.agent-presets/whale-girl/` |
-| `tools/port-to-dsh02.ps1` | **DSH 0.2.x 兼容化**：版本豁免 + 模块重定向 |
-| `dsh-wx-bridge-patch/apply-bridge-patch.ps1` | 给微信桥接打补丁 2、3 |
+| 脚本 | 用途 | 适用版本 |
+|---|---|---|
+| `tools/check-preset.ps1` | 校验 preset 文件（自动识别两种格式） | 0.1.x + 0.2.x |
+| `tools/deploy.ps1` | 校验 + 备份 + 部署到 `.agent-presets/whale-girl/` | **0.1.x** |
+| `tools/install-preset-02.ps1` | 把预设内联进 profile 的 `cordis.patch.yml`（幂等） | **0.2.x** |
+| `tools/port-to-dsh02.ps1` | 版本豁免 + 模块重定向（让桥接能在 0.2.x 上加载） | **0.2.x** |
+| `dsh-wx-bridge-patch/apply-bridge-patch.ps1` | 给微信桥接打补丁 2、3、4 | 两者 |
 
 ## 踩过的坑速查
 
 | 症状 | 原因 | 去哪看 |
 |---|---|---|
+| 微信每条消息都回 `format v4 message requires a producer-owned source kind` | 0.2.x 的 session format v4 拒绝 `{kind:'plugin'}` 写法 | [补丁 4](dsh-wx-bridge-patch/README.md) |
 | 微信突然连不上，`/chatops` 返回 404 | DSH 升到 0.2.x，插件被版本门禁跳过 | [porting-to-dsh-0.2.md](dsh-wx-bridge-patch/porting-to-dsh-0.2.md) |
 | 微信间歇性「本轮运行失败 / has no provider/model」 | 桥接唤醒冷会话绕过了模型注入器 | [补丁 1](dsh-wx-bridge-patch/README.md) |
 | 微信收不到任何回复（GUI 正常） | 误关了 `push.onSessionComplete`——那是唯一投递通道 | [补丁 2](dsh-wx-bridge-patch/README.md) |
 | 每轮回复重复、带「✅ 任务完成」外壳 | 原版行为，需打补丁 2 | [补丁 2](dsh-wx-bridge-patch/README.md) |
+| 0.2.x 里 preset 选择器找不到鲸鱼娘 | 0.2.x 不读 `.agent-presets/` 目录，要声明式定义 | 本文「DSH 有两个大版本」 |
 | 整轮失败：`{{model}} has no value` | persona 里写了模板变量 | 本文「踩坑」第 1 条 |
 | 人格切不动：`agent-preset/locked` | preset 一会话一锁，只能在空白会话切 | 本文「使用」 |
 
@@ -254,16 +275,18 @@ dsh web
 ```
 whale-girl-persona/
 ├── preset/
-│   ├── agent.cordis.yml   # persona 本体（部署到 .agent-presets/whale-girl/）
-│   └── preset.yml         # 显示名 / 描述 / 排序
+│   ├── whale-girl.patch.yml   # ★ DSH 0.2.x 声明式定义（推荐）
+│   ├── agent.cordis.yml       # DSH 0.1.x 目录式定义
+│   └── preset.yml             # 0.1.x 的显示名 / 描述 / 排序
 ├── tools/
-│   ├── check-preset.ps1     # 部署前校验
-│   ├── deploy.ps1           # 备份 + 部署
-│   └── port-to-dsh02.ps1    # DSH 0.2.x 兼容化（版本豁免 + 模块重定向）
+│   ├── check-preset.ps1       # 校验（两格式通吃）
+│   ├── deploy.ps1             # 0.1.x 部署
+│   ├── install-preset-02.ps1  # 0.2.x 安装（幂等）
+│   └── port-to-dsh02.ps1      # 0.2.x 兼容化（豁免 + 模块重定向）
 ├── dsh-wx-bridge-patch/
-│   ├── README.md                # 3 个补丁的完整说明与 diff
-│   ├── apply-bridge-patch.ps1   # 半自动重放（补丁 2、3）
-│   └── porting-to-dsh-0.2.md    # 0.2.x 移植的原理、风险、回滚
+│   ├── README.md              # 4 个补丁的完整说明与 diff
+│   ├── apply-bridge-patch.ps1 # 半自动重放（补丁 2、3、4）
+│   └── porting-to-dsh-0.2.md  # 0.2.x 移植：原理、风险、回滚
 ├── LICENSE
 └── README.md
 ```

@@ -99,6 +99,25 @@ if ($patched.Contains($old3)) {
   $skipped += "补丁 3（未找到匹配代码 —— 请手工核对 README）"
 }
 
+# ---------------- 补丁 4：DSH 0.2.x 的 format v4 消息 source ----------------
+# v4 拒绝 { kind: 'plugin', plugin: X }，要求 { kind: 'plugin:X' }
+$old4 = "        source: { kind: 'plugin', plugin: 'dsh-wechat' },"
+$new4 = @'
+        // [patch 4] DSH 0.2.x 的 session format v4 拒绝旧式
+        //   { kind: 'plugin', plugin: 'dsh-wechat' }
+        // 包装，要求「生产者自有 kind」，即 plugin:<plugin>。
+        source: { kind: 'plugin:dsh-wechat' },
+'@ -replace "`r`n", "`n"
+
+if ($patched.Contains($old4)) {
+  $patched = $patched.Replace($old4, $new4.TrimEnd("`n"))
+  $applied += "补丁 4（format v4 消息 source）"
+} elseif ($patched.Contains("kind: 'plugin:dsh-wechat'")) {
+  $skipped += "补丁 4（已是打过补丁的状态）"
+} else {
+  $skipped += "补丁 4（未找到匹配代码 —— 请手工核对 README）"
+}
+
 # ---------------- 结果 ----------------
 Info "--- 结果 ---"
 foreach ($a in $applied) { Ok $a }

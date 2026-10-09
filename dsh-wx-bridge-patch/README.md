@@ -6,7 +6,7 @@
 dsh plugin --profile web add github:CMD128/dsh-wx-bridge
 ```
 
-**但原版有 3 个问题**，会让体验很差甚至不可用。本目录记录我们实测出来的修法。
+**但原版有 4 个问题**，会让体验很差甚至不可用。本目录记录我们实测出来的修法。
 
 > 这些补丁改的是 `node_modules` 里的第三方插件文件，**插件升级会被覆盖**，
 > 届时按本文重放。`tools/apply-bridge-patch.ps1` 是半自动重放脚本。
@@ -16,6 +16,10 @@ dsh plugin --profile web add github:CMD128/dsh-wx-bridge
 | 1 | 微信唤醒冷会话时绕过模型注入器，间歇性整轮失败 | **致命** | 改源码 |
 | 2 | 每轮回复都套一层「✅ [标题] 任务完成：」外壳 | 体验 | 改源码 |
 | 3 | 每轮还先发一条「🚀 已发送给 [...]」 | 体验 | 改源码 |
+| 4 | **DSH 0.2.x 下每条消息都被拒：`format v4 message requires a producer-owned source kind`** | **致命（仅 0.2.x）** | 改源码 |
+
+> ⚠️ 在 **DSH 0.2.x** 上，先解决 [版本门禁与模块解析](porting-to-dsh-0.2.md)，
+> **再**打补丁 4。否则插件根本不会加载，改什么都没用。
 
 ---
 
@@ -223,6 +227,79 @@ if (event.type === 'turn/end') {
 ```
 
 **保留** `catch` 里的 `❌ 发送失败：...` —— 那是真错误，必须可见。
+
+---
+
+## 补丁 4（仅 DSH 0.2.x，致命）：消息 source 必须用「生产者自有 kind」
+
+### 症状
+
+微信里**每一条消息都回**：
+
+```
+本轮运行失败
+format v4 message requires a producer-owned source kind
+```
+
+GUI 里看起来正常，只有经微信驱动的那一轮失败。
+
+### 根因
+
+DSH 0.2.x 引入了 **session format v4**，它**拒绝**旧式的 `plugin` 包装写法。
+`dsh-session-format-v3-to-v4/lib/index.js`：
+
+```js
+function source(message) {
+  const value = message["source"];
+  if (!isSessionFormatJsonObject(value) || typeof value["kind"] !== "string"
+      || value["kind"].length === 0 || value["kind"] === "plugin")
+    throw new SessionFormatError("format v4 message requires a producer-owned source kind");
+}
+```
+
+而 wx-bridge 建消息时用的正是被禁的写法（`lib/bridge.js` 的 `forwardPrompt()`）：
+
+```js
+source: { kind: 'plugin', plugin: 'dsh-wechat' },     // ❌ v4 原生准入直接拒绝
+```
+
+注意：**v3 迁移路径会自动转换旧数据**（`rewritePluginSource` 把 `{kind:'plugin', plugin:X}`
+改写成 `{kind:'plugin:X'}`），但**新产生的消息没有迁移这一步，直接被拒**。
+
+### 修法
+
+v4 要的「生产者自有 kind」，正是上游迁移函数 `producerKind()` 的兜底返回值：
+
+```js
+function producerKind(plugin, role) {
+  ...
+  return `plugin:${plugin}`;          // dsh-wechat → plugin:dsh-wechat
+}
+```
+
+且只有 `kind` 一个字段时，上游迁移等价于 `{ kind: 'plugin:dsh-wechat' }`。
+
+所以把 `lib/bridge.js` 里那一处改成：
+
+```js
+      const message = createUserMessage({
+        content: [{ type: 'text', text }],
+        // DSH 0.2.x 的 session format v4 拒绝旧式 { kind: 'plugin', plugin: X } 包装，
+        // 要求「生产者自有 kind」，即 plugin:<plugin>。
+        source: { kind: 'plugin:dsh-wechat' },
+      })
+```
+
+**这处只有一行**，但漏了它整个微信通道就完全不可用。
+
+### 自查
+
+```powershell
+Select-String -Path "$env:USERPROFILE\.dsh\profiles\web\node_modules\dsh-wx-bridge\lib\bridge.js" `
+  -Pattern "kind: 'plugin'"
+```
+
+有输出 = 还没打补丁，必然失败。
 
 ---
 
